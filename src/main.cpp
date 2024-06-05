@@ -16,6 +16,12 @@
 
 #define VERSION "1.0"
 
+typedef struct
+{
+	struct dirent* entry;
+	char full_path[1024];
+} dirent_with_path;
+
 void print_size(off_t size, int human_readable)
 {
 	if(human_readable)
@@ -45,19 +51,33 @@ void print_size(off_t size, int human_readable)
 	}
 }
 
-int compare_by_time(const struct dirent** a, const struct dirent** b)
+int compare_by_time(const void* a, const void* b)
 {
 	struct stat stat_a, stat_b;
-	stat((*a)->d_name, &stat_a);
-	stat((*b)->d_name, &stat_b);
+	const dirent_with_path* entry_a = (const dirent_with_path*)a;
+	const dirent_with_path* entry_b = (const dirent_with_path*)b;
+
+	if(stat(entry_a->full_path, &stat_a) == -1 || stat(entry_b->full_path, &stat_b) == -1)
+	{
+		perror("stat");
+		return 0;
+	}
+
 	return stat_b.st_mtime - stat_a.st_mtime;
 }
 
-int compare_by_size(const struct dirent** a, const struct dirent** b)
+int compare_by_size(const void* a, const void* b)
 {
 	struct stat stat_a, stat_b;
-	stat((*a)->d_name, &stat_a);
-	stat((*b)->d_name, &stat_b);
+	const dirent_with_path* entry_a = (const dirent_with_path*)a;
+	const dirent_with_path* entry_b = (const dirent_with_path*)b;
+
+	if(stat(entry_a->full_path, &stat_a) == -1 || stat(entry_b->full_path, &stat_b) == -1)
+	{
+		perror("stat");
+		return 0;
+	}
+
 	return stat_b.st_size - stat_a.st_size;
 }
 
@@ -77,34 +97,29 @@ void ls(const char* path,
 	}
 
 	struct dirent** namelist;
-	int (*compar)(const struct dirent**, const struct dirent**);
+	int n = scandir(path, &namelist, NULL, alphasort);
+	dirent_with_path* entries = (dirent_with_path*)malloc(n * sizeof(dirent_with_path));
+	for(int i = 0; i < n; i++)
+	{
+		entries[i].entry = namelist[i];
+		snprintf(
+			entries[i].full_path, sizeof(entries[i].full_path), "%s/%s", path, namelist[i]->d_name);
+	}
 
 	if(sort_by_time)
 	{
-		compar = compare_by_time;
+		qsort(entries, n, sizeof(dirent_with_path), compare_by_time);
 	}
 	else if(sort_by_size)
 	{
-		compar = compare_by_size;
-	}
-	else
-	{
-		compar = alphasort;
-	}
-
-	int n = scandir(path, &namelist, NULL, compar);
-	if(n < 0)
-	{
-		perror("scandir");
-		exit(EXIT_FAILURE);
+		qsort(entries, n, sizeof(dirent_with_path), compare_by_size);
 	}
 
 	struct stat st;
-	char full_path[1024];
 	struct dirent* entry;
-	while(n--)
+	for(int i = 0; i < n; i++)
 	{
-		entry = namelist[n];
+		entry = entries[i].entry;
 
 		if(!show_hidden && entry->d_name[0] == '.')
 		{
@@ -112,12 +127,11 @@ void ls(const char* path,
 			continue;
 		}
 
-		snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-		if(stat(full_path, &st) == -1)
+		if(stat(entries[i].full_path, &st) == -1)
 		{
 			perror("stat");
 			free(entry);
-			exit(EXIT_FAILURE);
+			continue;
 		}
 
 		if(long_listing)
@@ -143,28 +157,25 @@ void ls(const char* path,
 
 			printf("%s %ld %s %s ", perms, st.st_nlink, pw->pw_name, gr->gr_name);
 			print_size(st.st_size, human_readable);
-			printf("%s %s\n", time_buf, entry->d_name);
+			printf("%s ", time_buf);
+		}
+		if(S_ISDIR(st.st_mode))
+		{
+			printf(COLOR_DIR "%s\n" COLOR_RESET, entry->d_name);
+		}
+		else if(st.st_mode & S_IXUSR)
+		{
+			printf(COLOR_EXEC "%s\n" COLOR_RESET, entry->d_name);
 		}
 		else
 		{
-			if(S_ISDIR(st.st_mode))
-			{
-				printf(COLOR_DIR "%s\n" COLOR_RESET, entry->d_name);
-			}
-			else if(st.st_mode & S_IXUSR)
-			{
-				printf(COLOR_EXEC "%s\n" COLOR_RESET, entry->d_name);
-			}
-			else
-			{
-				printf(COLOR_REG "%s\n" COLOR_RESET, entry->d_name);
-			}
+			printf(COLOR_REG "%s\n" COLOR_RESET, entry->d_name);
 		}
 
 		if(recursive && S_ISDIR(st.st_mode))
 		{
-			printf("\n%s:\n", full_path);
-			ls(full_path,
+			printf("\n%s:\n", entries[i].full_path);
+			ls(entries[i].full_path,
 			   long_listing,
 			   recursive,
 			   show_hidden,
@@ -175,6 +186,7 @@ void ls(const char* path,
 		free(entry);
 	}
 
+	free(entries);
 	closedir(dir);
 }
 
@@ -202,7 +214,6 @@ int main(int argc, char* argv[])
 	int sort_by_size = 0;
 	char* path = ".";
 
-	// Check for --help and --version options
 	for(int i = optind; i < argc; i++)
 	{
 		if(strcmp(argv[i], "--help") == 0)
