@@ -79,10 +79,19 @@ This is a custom implementation of the `ls` command in C. It provides various fu
 
 ## Compilation
 
-To compile the program, use the following command:
+This project uses CMake for building. Ensure you have CMake version 3.10 or higher.
+
+### Steps to Compile
+
+1. Create a `build` directory.
+2. Run CMake to configure the project.
+3. Compile the project.
 
 ```sh
-gcc -o main main.c
+mkdir build
+cd build
+cmake ..
+make
 ```
 
 ## License
